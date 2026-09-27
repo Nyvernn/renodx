@@ -51,6 +51,17 @@ renodx::mods::shader::CustomShaders custom_shaders = {
 
 renodx::utils::settings::Settings settings = {
     new renodx::utils::settings::Setting{
+        .key = "outputMode",
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .can_reset = false,
+        .label = "Presentation Output",
+        .section = "Tone Mapping",
+        .tooltip = "Selects the final presentation format. HDR10 uses R10G10B10A2 + BT.2020/ST.2084; scRGB uses the legacy FP16 output. Restart the game after changing this setting.",
+        .labels = {"scRGB (FP16)", "HDR10 (10-bit PQ)"},
+        .parse = [](float value) { return value >= 0.5f ? 1.f : 0.f; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "toneMapType",
         .binding = &shader_injection.toneMapType,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
@@ -391,6 +402,16 @@ void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
   auto* data = swapchain->create_private_data<SwapchainData>();
   if (data == nullptr) return;
 
+  const auto first_back_buffer = swapchain->get_back_buffer(0);
+  const auto first_back_buffer_desc = device->get_resource_desc(first_back_buffer);
+  if (first_back_buffer_desc.texture.format != reshade::api::format::r16g16b16a16_float) {
+    // HDR10 presentation is handled by the shared RenoDX swapchain proxy. It
+    // keeps the game's renderable clone in FP16 and writes PQ into the real
+    // R10G10B10A2 swapchain. Keep this per-swapchain object for lifecycle
+    // ownership, but do not allocate the legacy scRGB copy resources.
+    return;
+  }
+
   for (int i = 0; i < swapchain->get_back_buffer_count(); ++i) {
     auto back_buffer_resource = swapchain->get_back_buffer(i);
     auto back_buffer_desc = device->get_resource_desc(back_buffer_resource);
@@ -512,7 +533,22 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       }
 
       renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
-      renodx::mods::swapchain::Use(fdw_reason);
+
+      const bool use_hdr10 = renodx::utils::settings::FindSetting("outputMode")->GetValue() >= 0.5f;
+      shader_injection.swapChainOutputPreset = use_hdr10 ? 1.f : 2.f;
+
+      renodx::mods::swapchain::SetUseHDR10(use_hdr10);
+      if (use_hdr10) {
+        // The real presentation target is 10-bit HDR10, while the shared
+        // swapchain proxy clone remains R16G16B16A16_FLOAT for all game and
+        // RenoDX rendering before the final PQ conversion pass.
+        renodx::mods::swapchain::use_resource_cloning = true;
+        renodx::mods::swapchain::swapchain_proxy_compatibility_mode = false;
+        renodx::mods::swapchain::expected_constant_buffer_index = 13;
+        renodx::mods::swapchain::swap_chain_proxy_vertex_shader = __final_vertex_shader;
+        renodx::mods::swapchain::swap_chain_proxy_pixel_shader = __final_pixel_shader;
+      }
+      renodx::mods::swapchain::Use(fdw_reason, &shader_injection);
       renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
 
       renodx::mods::swapchain::swap_chain_upgrade_targets.push_back({
