@@ -56,12 +56,12 @@ renodx::utils::settings::Settings settings = {
     output_mode_setting = new renodx::utils::settings::Setting{
         .key = "outputMode",
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-        .default_value = 0.f,
+        .default_value = 1.f,
         .can_reset = false,
         .label = "Presentation Output",
         .section = "Tone Mapping",
         .tooltip = "Selects the presentation format used after restarting the game.",
-        .labels = {"HDR10 (10-bit PQ)", "scRGB (FP16)"},
+        .labels = {"scRGB (FP16)", "HDR10 (10-bit PQ)"},
         .parse = [](float value) { return value >= 0.5f ? 1.f : 0.f; },
     },
     new renodx::utils::settings::Setting{
@@ -511,7 +511,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
 
       active_output_mode = output_mode_setting->GetValue();
-      const bool use_hdr10 = active_output_mode == 0.f;
+      const bool use_hdr10 = active_output_mode >= 0.5f;
       shader_injection.swapChainOutputPreset = use_hdr10 ? 1.f : 2.f;
 
       renodx::mods::swapchain::SetUseHDR10(use_hdr10);
@@ -547,7 +547,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       break;
     }
     case DLL_PROCESS_DETACH:
-      if (active_output_mode != 0.f) {
+      if (active_output_mode < 0.5f) {
         reshade::unregister_event<reshade::addon_event::init_device>(OnInitDevice);
         reshade::unregister_event<reshade::addon_event::destroy_device>(OnDestroyDevice);
         reshade::unregister_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
